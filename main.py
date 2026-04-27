@@ -82,7 +82,7 @@ def get_target_stats(target_id: int):
 
     if not target:
         db.close()
-        return {"error": "target not found"}
+        raise HTTPException(status_code=404, detail="target not found")
 
     total_checks = (
         db.query(CheckResult)
@@ -248,7 +248,7 @@ def delete_target(target_id: int):
 
     if not target:
         db.close()
-        return {"error": "target not found"}
+        raise HTTPException(status_code=404, detail="target not found")
 
     db.delete(target)
     db.commit()
