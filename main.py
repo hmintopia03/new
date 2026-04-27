@@ -8,6 +8,7 @@ import requests
 import time
 import os
 import logging
+from fastapi import HTTPException
 
 logging.basicConfig(
     level=logging.INFO,
@@ -179,6 +180,15 @@ def get_stats():
 def add_target(target: Target):
     db = SessionLocal()
 
+    existing = db.query(TargetModel).filter(TargetModel.url == target.url).first()
+
+    if existing:
+        db.close()
+        raise HTTPException(
+            status_code=400,
+            detail="target url already exists"
+        )
+
     row = TargetModel(
         name=target.name,
         url=target.url
@@ -258,7 +268,20 @@ def update_target(target_id: int, target: Target):
 
     if not row:
         db.close()
-        return {"error": "target not found"}
+        raise HTTPException(status_code=404, detail="target not found")
+
+    existing = (
+        db.query(TargetModel)
+        .filter(TargetModel.url == target.url, TargetModel.id != target_id)
+        .first()
+    )
+
+    if existing:
+        db.close()
+        raise HTTPException(
+            status_code=400,
+            detail="target url already exists"
+        )
 
     row.name = target.name
     row.url = target.url
@@ -273,6 +296,7 @@ def update_target(target_id: int, target: Target):
 
     db.close()
     return result
+
 def save_check_result(url: str):
     logging.info(f"[CHECKING] {url}")
 
