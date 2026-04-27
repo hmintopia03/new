@@ -248,6 +248,31 @@ def delete_target(target_id: int):
         "message": "target deleted",
         "target_id": target_id
     }
+
+
+@app.put("/targets/{target_id}")
+def update_target(target_id: int, target: Target):
+    db = SessionLocal()
+
+    row = db.query(TargetModel).filter(TargetModel.id == target_id).first()
+
+    if not row:
+        db.close()
+        return {"error": "target not found"}
+
+    row.name = target.name
+    row.url = target.url
+
+    db.commit()
+
+    result = {
+        "id": row.id,
+        "name": row.name,
+        "url": row.url
+    }
+
+    db.close()
+    return result
 def save_check_result(url: str):
     logging.info(f"[CHECKING] {url}")
 
