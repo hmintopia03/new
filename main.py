@@ -77,6 +77,18 @@ def dashboard():
             .order_by(CheckResult.id.desc())
             .first()
         )
+        checks = (
+        db.query(CheckResult)
+        .filter(CheckResult.url == target.url)
+        .all()
+        )
+
+        uptime = "N/A"
+
+        if checks:
+            up_count = sum(1 for c in checks if c.is_up)
+            uptime_percent = (up_count / len(checks)) * 100
+            uptime = f"{uptime_percent:.1f}%"
 
         status = "UNKNOWN"
         status_class = "unknown"
@@ -98,6 +110,7 @@ def dashboard():
             <td>{target.url}</td>
             <td class="{status_class}">{status}</td>
             <td>{latency}</td>
+            <td>{uptime}</td>
         </tr>
         """)
 
@@ -166,6 +179,7 @@ def dashboard():
                     <th>URL</th>
                     <th>Status</th>
                     <th>Latency</th>
+                    <th>Uptime</th>
                 </tr>
                 {''.join(rows)}
             </table>
