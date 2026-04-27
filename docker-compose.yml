@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: uptime
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d uptime"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://user:password@db:5432/uptime
+      DISCORD_WEBHOOK_URL: "https://discordapp.com/api/webhooks/1498210822751518792/40E7alT6Vu19lKO91ijc83fCXR5Rn8MajnDQ88lJvBQr_8r2EB0cu7EuJ-diuQpE0Tpq"
