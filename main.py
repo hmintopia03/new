@@ -176,6 +176,12 @@ def get_stats():
         "average_latency_ms": int(average_latency) if average_latency else None
     }
 
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok"
+    }
+
 @app.post("/targets")
 def add_target(target: Target):
     db = SessionLocal()
