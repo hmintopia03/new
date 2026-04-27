@@ -106,7 +106,7 @@ def dashboard():
 
         rows.append(f"""
         <tr>
-            <td>{target.name}</td>
+            <td><a href="/dashboard/{target.id}">{target.name}</a></td>
             <td>{target.url}</td>
             <td class="{status_class}">{status}</td>
             <td>{latency}</td>
@@ -185,6 +185,70 @@ def dashboard():
             </table>
 
             <p><a href="/docs">API Docs</a></p>
+        </body>
+    </html>
+    """
+@app.get("/dashboard/{target_id}", response_class=HTMLResponse)
+def target_detail(target_id: int):
+    db = SessionLocal()
+
+    target = db.query(TargetModel).filter(TargetModel.id == target_id).first()
+
+    if not target:
+        return "<h1>Target not found</h1>"
+
+    checks = (
+        db.query(CheckResult)
+        .filter(CheckResult.url == target.url)
+        .order_by(CheckResult.id.desc())
+        .limit(10)
+        .all()
+    )
+
+    rows = []
+
+    for c in checks:
+        status = "UP" if c.is_up else "DOWN"
+        status_class = "up" if c.is_up else "down"
+        latency = f"{c.latency_ms}ms" if c.latency_ms else "-"
+        time = c.checked_at.strftime("%H:%M:%S") if c.checked_at else "-"
+
+        rows.append(f"""
+        <tr>
+            <td>{time}</td>
+            <td class="{status_class}">{status}</td>
+            <td>{latency}</td>
+        </tr>
+        """)
+
+    db.close()
+
+    return f"""
+    <html>
+        <head>
+            <title>{target.name} Detail</title>
+            <style>
+                body {{ font-family: Arial; margin: 40px; }}
+                .up {{ color: green; font-weight: bold; }}
+                .down {{ color: red; font-weight: bold; }}
+                table {{ border-collapse: collapse; width: 100%; }}
+                td, th {{ padding: 10px; border-bottom: 1px solid #ddd; }}
+            </style>
+        </head>
+        <body>
+            <h1>{target.name} ({target.url})</h1>
+
+            <table>
+                <tr>
+                    <th>Time</th>
+                    <th>Status</th>
+                    <th>Latency</th>
+                </tr>
+                {''.join(rows)}
+            </table>
+
+            <br>
+            <a href="/">← Back</a>
         </body>
     </html>
     """
