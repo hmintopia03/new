@@ -79,17 +79,24 @@ def dashboard():
         )
 
         status = "UNKNOWN"
+        status_class = "unknown"
         latency = "-"
 
         if latest:
-            status = "UP" if latest.is_up else "DOWN"
+            if latest.is_up:
+                status = "UP"
+                status_class = "up"
+            else:
+                status = "DOWN"
+                status_class = "down"
+
             latency = f"{latest.latency_ms}ms" if latest.latency_ms else "-"
 
         rows.append(f"""
         <tr>
             <td>{target.name}</td>
             <td>{target.url}</td>
-            <td>{status}</td>
+            <td class="{status_class}">{status}</td>
             <td>{latency}</td>
         </tr>
         """)
@@ -99,7 +106,56 @@ def dashboard():
     return f"""
     <html>
         <head>
+    
             <title>Uptime Monitor</title>
+            <meta http-equiv="refresh" content="10">
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    margin: 40px;
+                    background: #f7f7f7;
+                }}
+
+                h1 {{
+                    margin-bottom: 24px;
+                }}
+
+                table {{
+                    border-collapse: collapse;
+                    width: 100%;
+                    background: white;
+                }}
+
+                th, td {{
+                    padding: 12px;
+                    border-bottom: 1px solid #ddd;
+                    text-align: left;
+                }}
+
+                th {{
+                    background: #f0f0f0;
+                }}
+
+                .up {{
+                    color: green;
+                    font-weight: bold;
+                }}
+
+                .down {{
+                    color: red;
+                    font-weight: bold;
+                }}
+
+                .unknown {{
+                    color: gray;
+                    font-weight: bold;
+                }}
+
+                a {{
+                    display: inline-block;
+                    margin-top: 20px;
+                }}
+            </style>
         </head>
         <body>
             <h1>Uptime Monitor</h1>
