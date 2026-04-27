@@ -9,6 +9,12 @@ import time
 import os
 import logging
 from fastapi import HTTPException
+from datetime import datetime, timedelta
+from sqlalchemy import DateTime
+from fastapi.responses import HTMLResponse
+
+COOLDOWN = timedelta(minutes=5)
+now = datetime.utcnow()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,12 +34,14 @@ Base = declarative_base()
 
 class CheckResult(Base):
     __tablename__ = "checks"
-
     id = Column(Integer, primary_key=True, index=True)
     url = Column(String)
     status_code = Column(Integer)
     latency_ms = Column(Integer)
     is_up = Column(Boolean)
+
+    checked_at = Column(DateTime, default=datetime.utcnow) 
+    last_alerted_at = Column(DateTime, nullable=True)
 
 
 class TargetModel(Base):
@@ -54,9 +62,62 @@ app = FastAPI()
 targets = []
 
 
-@app.get("/")
-def root():
-    return {"msg": "uptime monitor is running"}
+@app.get("/", response_class=HTMLResponse)
+def dashboard():
+    db = SessionLocal()
+
+    targets = db.query(TargetModel).all()
+
+    rows = []
+
+    for target in targets:
+        latest = (
+            db.query(CheckResult)
+            .filter(CheckResult.url == target.url)
+            .order_by(CheckResult.id.desc())
+            .first()
+        )
+
+        status = "UNKNOWN"
+        latency = "-"
+
+        if latest:
+            status = "UP" if latest.is_up else "DOWN"
+            latency = f"{latest.latency_ms}ms" if latest.latency_ms else "-"
+
+        rows.append(f"""
+        <tr>
+            <td>{target.name}</td>
+            <td>{target.url}</td>
+            <td>{status}</td>
+            <td>{latency}</td>
+        </tr>
+        """)
+
+    db.close()
+
+    return f"""
+    <html>
+        <head>
+            <title>Uptime Monitor</title>
+        </head>
+        <body>
+            <h1>Uptime Monitor</h1>
+
+            <table border="1" cellpadding="8">
+                <tr>
+                    <th>Name</th>
+                    <th>URL</th>
+                    <th>Status</th>
+                    <th>Latency</th>
+                </tr>
+                {''.join(rows)}
+            </table>
+
+            <p><a href="/docs">API Docs</a></p>
+        </body>
+    </html>
+    """
 
 @app.get("/checks")
 def get_checks():
@@ -74,113 +135,6 @@ def get_checks():
         for row in rows
     ]
 
-@app.get("/targets/{target_id}/stats")
-def get_target_stats(target_id: int):
-    db = SessionLocal()
-
-    target = db.query(TargetModel).filter(TargetModel.id == target_id).first()
-
-    if not target:
-        db.close()
-        raise HTTPException(status_code=404, detail="target not found")
-
-    total_checks = (
-        db.query(CheckResult)
-        .filter(CheckResult.url == target.url)
-        .count()
-    )
-
-    up_count = (
-        db.query(CheckResult)
-        .filter(CheckResult.url == target.url, CheckResult.is_up == True)
-        .count()
-    )
-
-    down_count = total_checks - up_count
-
-    average_latency = (
-        db.query(func.avg(CheckResult.latency_ms))
-        .filter(CheckResult.url == target.url, CheckResult.latency_ms != None)
-        .scalar()
-    )
-
-    latest_checks = (
-        db.query(CheckResult)
-        .filter(CheckResult.url == target.url)
-        .order_by(CheckResult.id.desc())
-        .limit(10)
-        .all()
-    )
-
-    db.close()
-
-    return {
-        "target": {
-            "id": target.id,
-            "name": target.name,
-            "url": target.url
-        },
-        "total_checks": total_checks,
-        "up_count": up_count,
-        "down_count": down_count,
-        "uptime_percentage": round((up_count / total_checks) * 100, 2) if total_checks > 0 else None,
-        "average_latency_ms": int(average_latency) if average_latency else None,
-        "latest_checks": [
-            {
-                "id": row.id,
-                "status_code": row.status_code,
-                "latency_ms": row.latency_ms,
-                "is_up": row.is_up
-            }
-            for row in latest_checks
-        ]
-    }
-
-@app.get("/stats")
-def get_stats():
-    db = SessionLocal()
-
-    total_checks = db.query(CheckResult).count()
-
-    up_count = (
-        db.query(CheckResult)
-        .filter(CheckResult.is_up == True)
-        .count()
-    )
-
-    down_count = (
-        db.query(CheckResult)
-        .filter(CheckResult.is_up == False)
-        .count()
-    )
-
-    average_latency = (
-        db.query(func.avg(CheckResult.latency_ms))
-        .filter(CheckResult.latency_ms != None)
-        .scalar()
-    )
-
-    latest = (
-        db.query(CheckResult)
-        .order_by(CheckResult.id.desc())
-        .first()
-    )
-
-    db.close()
-
-    return {
-        "total_checks": total_checks,
-        "up_count": up_count,
-        "down_count": down_count,
-        "latest_status": "up" if latest and latest.is_up else "down",
-        "average_latency_ms": int(average_latency) if average_latency else None
-    }
-
-@app.get("/health")
-def health_check():
-    return {
-        "status": "ok"
-    }
 
 @app.post("/targets")
 def add_target(target: Target):
@@ -343,8 +297,10 @@ def save_check_result(url: str):
     # 상태 변화 감지
     if last:
         if last.is_up and not is_up:
-            logging.error(f"[ALERT] {url} went DOWN")
-            send_discord_alert(f"🚨 DOWN: {url}")
+            if not last.last_alerted_at or (now - last.last_alerted_at > COOLDOWN):
+                logging.error(f"[ALERT] {url} went DOWN")
+                send_discord_alert(f"🚨 DOWN: {url}")
+                row.last_alerted_at = now
 
         elif not last.is_up and is_up:
             logging.info(f"[RECOVER] {url} is back UP")
