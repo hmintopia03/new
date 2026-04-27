@@ -2,14 +2,18 @@
 
 A simple uptime monitoring service built with FastAPI, PostgreSQL, Docker, and Discord alerts.
 
-## Features
+## Current Features
 
-- Register URLs to monitor
+- FastAPI backend
+- PostgreSQL database
+- Dockerfile deployment
+- Railway cloud deployment
 - Periodic uptime checks
-- Store check results in PostgreSQL
-- Track UP / DOWN status
-- Basic stats endpoint
-- Docker Compose setup
+- Target CRUD
+- Duplicate URL prevention
+- Healthcheck endpoint
+- Basic stats API
+- Target-specific stats API
 - Discord alert support
 
 ## Tech Stack
@@ -25,8 +29,11 @@ A simple uptime monitoring service built with FastAPI, PostgreSQL, Docker, and D
 ## API Endpoints
 
 - `GET /`
+- `GET /health`
 - `POST /targets`
 - `GET /targets`
+- `PUT /targets/{target_id}`
+- `DELETE /targets/{target_id}`
 - `POST /check`
 - `GET /checks`
 - `GET /stats`
