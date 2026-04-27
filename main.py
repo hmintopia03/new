@@ -136,13 +136,22 @@ def get_target_stats(target_id: int):
     }
 
 @app.get("/stats")
-@app.get("/stats")
 def get_stats():
     db = SessionLocal()
 
     total_checks = db.query(CheckResult).count()
-    up_count = db.query(CheckResult).filter(CheckResult.is_up == True).count()
-    down_count = db.query(CheckResult).filter(CheckResult.is_up == False).count()
+
+    up_count = (
+        db.query(CheckResult)
+        .filter(CheckResult.is_up == True)
+        .count()
+    )
+
+    down_count = (
+        db.query(CheckResult)
+        .filter(CheckResult.is_up == False)
+        .count()
+    )
 
     average_latency = (
         db.query(func.avg(CheckResult.latency_ms))
@@ -150,9 +159,15 @@ def get_stats():
         .scalar()
     )
 
-    latest = db.query(CheckResult).order_by(CheckResult.id.desc()).first()
+    latest = (
+        db.query(CheckResult)
+        .order_by(CheckResult.id.desc())
+        .first()
+    )
 
-    result = {
+    db.close()
+
+    return {
         "total_checks": total_checks,
         "up_count": up_count,
         "down_count": down_count,
@@ -160,8 +175,6 @@ def get_stats():
         "average_latency_ms": int(average_latency) if average_latency else None
     }
 
-    db.close()
-    return result
 @app.post("/targets")
 def add_target(target: Target):
     db = SessionLocal()
@@ -217,6 +230,24 @@ def get_last_status(db, url: str):
     )
     return last
 
+@app.delete("/targets/{target_id}")
+def delete_target(target_id: int):
+    db = SessionLocal()
+
+    target = db.query(TargetModel).filter(TargetModel.id == target_id).first()
+
+    if not target:
+        db.close()
+        return {"error": "target not found"}
+
+    db.delete(target)
+    db.commit()
+    db.close()
+
+    return {
+        "message": "target deleted",
+        "target_id": target_id
+    }
 def save_check_result(url: str):
     logging.info(f"[CHECKING] {url}")
 
