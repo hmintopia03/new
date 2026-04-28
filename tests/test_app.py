@@ -1,3 +1,8 @@
+from main import Base, engine
+
+Base.metadata.create_all(bind=engine)
+
+
 import sys
 from pathlib import Path
 
