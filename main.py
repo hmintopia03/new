@@ -12,9 +12,10 @@ from fastapi import HTTPException
 from datetime import datetime, timedelta
 from sqlalchemy import DateTime
 from fastapi.responses import HTMLResponse
+import httpx
+import asyncio
 
 COOLDOWN = timedelta(minutes=5)
-now = datetime.utcnow()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,34 +66,27 @@ targets = []
 @app.get("/", response_class=HTMLResponse)
 def dashboard():
     db = SessionLocal()
-
     targets = db.query(TargetModel).all()
-
     rows = []
 
     for target in targets:
-        latest = (
+        checks = (
             db.query(CheckResult)
             .filter(CheckResult.url == target.url)
             .order_by(CheckResult.id.desc())
-            .first()
-        )
-        checks = (
-        db.query(CheckResult)
-        .filter(CheckResult.url == target.url)
-        .all()
+            .limit(10)
+            .all()
         )
 
-        uptime = "N/A"
+        latest = checks[0] if checks else None
 
-        if checks:
-            up_count = sum(1 for c in checks if c.is_up)
-            uptime_percent = (up_count / len(checks)) * 100
-            uptime = f"{uptime_percent:.1f}%"
-
-        status = "UNKNOWN"
+        status = "PENDING"
         status_class = "unknown"
         latency = "-"
+        uptime = "Waiting"
+        hint = "Waiting for first check..."
+        latency_class = "unknown"
+        last_time = "-"
 
         if latest:
             if latest.is_up:
@@ -103,15 +97,47 @@ def dashboard():
                 status_class = "down"
 
             latency = f"{latest.latency_ms}ms" if latest.latency_ms else "-"
+            hint = "Latest check recorded"
+            last_time = latest.checked_at.strftime("%H:%M:%S") if latest.checked_at else "-"
+
+            if latest.latency_ms:
+                latency_class = "slow" if latest.latency_ms > 1000 else "fast"
+
+        if checks:
+            if len(checks) >= 3:
+                up_count = sum(1 for c in checks if c.is_up)
+                uptime_percent = (up_count / len(checks)) * 100
+                uptime = f"{uptime_percent:.1f}%"
+            else:
+                uptime = "Calculating..."
 
         rows.append(f"""
-        <tr>
-            <td><a href="/dashboard/{target.id}">{target.name}</a></td>
-            <td>{target.url}</td>
-            <td class="{status_class}">{status}</td>
-            <td>{latency}</td>
-            <td>{uptime}</td>
-        </tr>
+        <a href="/dashboard/{target.id}" style="text-decoration: none; color: inherit;">
+            <div class="card">
+                <div class="card-header">
+                    <div class="name">{target.name}</div>
+                    <div class="status {status_class}">{status}</div>
+                </div>
+
+                <div class="url">{target.url}</div>
+                <div class="hint">{hint}</div>
+                {"<div class='hint'>Last checked: " + last_time + "</div>" if latest else ""}
+
+                {"<div class='empty-state'>No checks yet</div>" if not latest else ""}
+
+                <div class="metrics">
+                    <div class="metric">
+                        <div class="metric-label">Latency</div>
+                        <div class="metric-value {latency_class}">{latency}</div>
+                    </div>
+
+                    <div class="metric">
+                        <div class="metric-label">Uptime</div>
+                        <div class="metric-value">{uptime}</div>
+                    </div>
+                </div>
+            </div>
+        </a>
         """)
 
     db.close()
@@ -127,6 +153,20 @@ def dashboard():
                     font-family: Arial, sans-serif;
                     margin: 40px;
                     background: #f7f7f7;
+                }}
+                
+                .grid {{
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                    gap: 20px;
+                }}
+
+                .card {{
+                    background: white;
+                    border-radius: 14px;
+                    padding: 20px;
+                    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+                    border: 1px solid #e5e5e5;
                 }}
 
                 h1 {{
@@ -155,8 +195,8 @@ def dashboard():
                 }}
 
                 .down {{
-                    color: red;
-                    font-weight: bold;
+                color: white;
+                background: #ff4d4f;
                 }}
 
                 .unknown {{
@@ -168,23 +208,78 @@ def dashboard():
                     display: inline-block;
                     margin-top: 20px;
                 }}
+                .card-header {{
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 12px;
+                }}
+
+                .name {{
+                    font-size: 20px;
+                    font-weight: bold;
+                }}
+
+                .status {{
+                    padding: 4px 10px;
+                    border-radius: 999px;
+                    font-size: 13px;
+                    font-weight: bold;
+                }}
+
+                .url {{
+                    color: #666;
+                    font-size: 14px;
+                    word-break: break-all;
+                    margin-bottom: 16px;
+                }}
+
+                .metrics {{
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 12px;
+                }}
+
+                .metric {{
+                    background: #f7f7f7;
+                    border-radius: 10px;
+                    padding: 12px;
+                }}
+
+                .metric-label {{
+                    color: #777;
+                    font-size: 12px;
+                    margin-bottom: 4px;
+                }}
+
+                .metric-value {{
+                    font-size: 18px;
+                    font-weight: bold;
+                }}
+                .hint {{
+                color: #999;
+                font-size: 13px;
+                margin-bottom: 16px;
+                }}
+                .empty-state {{
+                color: #999;
+                font-size: 14px;
+                margin-bottom: 14px;
+                font-style: italic;
+            }}
             </style>
         </head>
         <body>
             <h1>Uptime Monitor</h1>
+            <div class="subtitle">Live service health dashboard. Auto-refreshes every 10 seconds.</div>
 
-            <table border="1" cellpadding="8">
-                <tr>
-                    <th>Name</th>
-                    <th>URL</th>
-                    <th>Status</th>
-                    <th>Latency</th>
-                    <th>Uptime</th>
-                </tr>
+            <div class="grid">
                 {''.join(rows)}
-            </table>
+            </div>
 
-            <p><a href="/docs">API Docs</a></p>
+            <div class="actions">
+                <a href="/docs">API Docs</a>
+            </div>
         </body>
     </html>
     """
@@ -226,29 +321,123 @@ def target_detail(target_id: int):
     return f"""
     <html>
         <head>
-            <title>{target.name} Detail</title>
+            <title>Uptime Monitor</title>
+            <meta http-equiv="refresh" content="10">
             <style>
-                body {{ font-family: Arial; margin: 40px; }}
-                .up {{ color: green; font-weight: bold; }}
-                .down {{ color: red; font-weight: bold; }}
-                table {{ border-collapse: collapse; width: 100%; }}
-                td, th {{ padding: 10px; border-bottom: 1px solid #ddd; }}
+                body {{
+                    font-family: Arial, sans-serif;
+                    margin: 40px;
+                    background: #f5f5f5;
+                    color: #111;
+                }}
+
+                h1 {{
+                    margin-bottom: 8px;
+                }}
+
+                .subtitle {{
+                    color: #666;
+                    margin-bottom: 32px;
+                }}
+
+                .grid {{
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                    gap: 20px;
+                }}
+
+                .card {{
+                    background: white;
+                    border-radius: 14px;
+                    padding: 20px;
+                    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+                    border: 1px solid #e5e5e5;
+                }}
+
+                .card-header {{
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 12px;
+                }}
+
+                .name {{
+                    font-size: 20px;
+                    font-weight: bold;
+                }}
+
+                .status {{
+                    padding: 4px 10px;
+                    border-radius: 999px;
+                    font-size: 13px;
+                    font-weight: bold;
+                }}
+
+                .up {{
+                    color: #0f7a32;
+                    background: #dff7e7;
+                }}
+
+                .down {{
+                    color: #a40000;
+                    background: #ffe1e1;
+                }}
+
+                .unknown {{
+                    color: #555;
+                    background: #eeeeee;
+                }}
+
+                .url {{
+                    color: #666;
+                    font-size: 14px;
+                    word-break: break-all;
+                    margin-bottom: 16px;
+                }}
+
+                .metrics {{
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 12px;
+                }}
+
+                .metric {{
+                    background: #f7f7f7;
+                    border-radius: 10px;
+                    padding: 12px;
+                }}
+
+                .metric-label {{
+                    color: #777;
+                    font-size: 12px;
+                    margin-bottom: 4px;
+                }}
+
+                .metric-value {{
+                    font-size: 18px;
+                    font-weight: bold;
+                }}
+
+                .actions {{
+                    margin-top: 32px;
+                }}
+
+                a {{
+                    color: #333;
+                }}
             </style>
         </head>
         <body>
-            <h1>{target.name} ({target.url})</h1>
+            <h1>Uptime Monitor</h1>
+            <div class="subtitle">Live service health dashboard. Auto-refreshes every 10 seconds.</div>
 
-            <table>
-                <tr>
-                    <th>Time</th>
-                    <th>Status</th>
-                    <th>Latency</th>
-                </tr>
+            <div class="grid">
                 {''.join(rows)}
-            </table>
+            </div>
 
-            <br>
-            <a href="/">← Back</a>
+            <div class="actions">
+                <a href="/docs">API Docs</a>
+            </div>
         </body>
     </html>
     """
@@ -391,17 +580,51 @@ def update_target(target_id: int, target: Target):
     db.close()
     return result
 
+def request_with_retry(url: str, retries: int = 3, timeout: int = 3):
+    last_error = None
+
+    for attempt in range(1, retries + 1):
+        try:
+            response = requests.get(url, timeout=timeout)
+            return response, attempt
+
+        except requests.RequestException as e:
+            last_error = e
+            logging.warning(f"[RETRY] {url} attempt {attempt}/{retries} failed: {e}")
+            time.sleep(1)
+
+    raise last_error
+
+async def async_request_with_retry(url: str, retries: int = 3, timeout: int = 3):
+    last_error = None
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for attempt in range(1, retries + 1):
+            try:
+                response = await client.get(url)
+                return response, attempt
+
+            except httpx.RequestError as e:
+                last_error = e
+                logging.warning(f"[RETRY] {url} attempt {attempt}/{retries} failed: {e}")
+                await asyncio.sleep(1)
+
+    raise last_error
+
 def save_check_result(url: str):
+    now = datetime.utcnow()
     logging.info(f"[CHECKING] {url}")
 
     db = SessionLocal()
     start = time.time()
 
     try:
-        res = requests.get(url, timeout=5)
+        res, attempts = request_with_retry(url)
         latency = int((time.time() - start) * 1000)
 
         is_up = res.status_code == 200
+
+        logging.info(f"[SUCCESS] {url} checked after {attempts} attempt(s)")
 
         row = CheckResult(
             url=url,
@@ -445,6 +668,7 @@ def save_check_result(url: str):
     else:
         logging.info(f"[FIRST CHECK] {url} is {'UP' if is_up else 'DOWN'}")
 
+
     # 실패 로그
     if not is_up:
         logging.warning(f"[DOWN] {url} is down")
@@ -456,11 +680,73 @@ def save_check_result(url: str):
         "url": url,
         "status_code": row.status_code,
         "latency_ms": row.latency_ms,
-        "is_up": row.is_up
+        "is_up": row.is_up,
+        "attempts": attempts if is_up else 3
     }
 
     db.close()
     return result
+
+async def async_save_check_result(url: str):
+    now = datetime.utcnow()
+    logging.info(f"[CHECKING] {url}")
+
+    db = SessionLocal()
+    start = time.time()
+
+    try:
+        res, attempts = await async_request_with_retry(url)
+        latency = int((time.time() - start) * 1000)
+        is_up = res.status_code == 200
+
+        logging.info(f"[SUCCESS] {url} checked after {attempts} attempt(s)")
+
+        row = CheckResult(
+            url=url,
+            status_code=res.status_code,
+            latency_ms=latency,
+            is_up=is_up
+        )
+
+    except httpx.RequestError:
+        is_up = False
+
+        row = CheckResult(
+            url=url,
+            status_code=None,
+            latency_ms=None,
+            is_up=False
+        )
+
+    last = (
+        db.query(CheckResult)
+        .filter(CheckResult.url == url)
+        .order_by(CheckResult.id.desc())
+        .first()
+    )
+
+    if last:
+        if last.is_up and not is_up:
+            if not last.last_alerted_at or (now - last.last_alerted_at > COOLDOWN):
+                logging.error(f"[ALERT] {url} went DOWN")
+                send_discord_alert(f"🚨 DOWN: {url}")
+                row.last_alerted_at = now
+
+        elif not last.is_up and is_up:
+            logging.info(f"[RECOVER] {url} is back UP")
+            send_discord_alert(f"✅ RECOVERED: {url}")
+
+        else:
+            logging.info(f"[NO CHANGE] {url} is still {'UP' if is_up else 'DOWN'}")
+    else:
+        logging.info(f"[FIRST CHECK] {url} is {'UP' if is_up else 'DOWN'}")
+
+    if not is_up:
+        logging.warning(f"[DOWN] {url} is down")
+
+    db.add(row)
+    db.commit()
+    db.close()
 
 def auto_check_targets():
     db = SessionLocal()
@@ -469,6 +755,18 @@ def auto_check_targets():
 
     for target in rows:
         save_check_result(target.url)
+
+async def auto_check_targets_async():
+    db = SessionLocal()
+    rows = db.query(TargetModel).all()
+    db.close()
+
+    await asyncio.gather(
+        *(async_save_check_result(target.url) for target in rows)
+    )
+    
+def run_auto_check_targets_async():
+    asyncio.run(auto_check_targets_async())
 
 def send_discord_alert(message: str):
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
@@ -483,5 +781,5 @@ def send_discord_alert(message: str):
         logging.error(f"Failed to send Discord alert: {e}")
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(auto_check_targets, "interval", seconds=10)
+scheduler.add_job(run_auto_check_targets_async, "interval", seconds=10)
 scheduler.start()
