@@ -43,3 +43,10 @@ A simple uptime monitoring service built with FastAPI, PostgreSQL, Docker, and D
 
 ```bash
 docker compose up --build
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and fill in the values.
+
+```bash
+cp .env.example .env

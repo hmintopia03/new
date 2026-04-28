@@ -1,6 +1,10 @@
+
+## 3. `.gitignore` 확인
+
+```txt
 .env
+test.db
 venv/
 __pycache__/
 *.pyc
 .pytest_cache/
-test.db
