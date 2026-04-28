@@ -458,6 +458,9 @@ def get_checks():
         for row in rows
     ]
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 @app.post("/targets")
 def add_target(target: Target):
