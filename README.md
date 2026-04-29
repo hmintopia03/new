@@ -74,20 +74,32 @@ cp .env.example .env
 
 Required variables:
 
-DATABASE_URL
-DISCORD_WEBHOOK_URL
-Screenshot
+- `DATABASE_URL`
+- `DISCORD_WEBHOOK_URL`
 
-What this project demonstrates
-Backend system design for monitoring services
-Handling unreliable networks with retry logic
-Async parallel processing for scalability
-Database persistence and query optimization
-Basic observability (logs + alerts)
-API design and rate limiting
-Future Improvements
-Queue system (Celery / Redis)
-Advanced alerting (Slack / Email)
-Frontend dashboard improvements (charts)
-Authentication & multi-user support
-Distributed monitoring (multi-region checks)
+---
+
+## Screenshot
+
+![Dashboard](./screenshot.png)
+
+---
+
+## What this project demonstrates
+
+- Backend system design for monitoring services
+- Handling unreliable networks with retry logic
+- Async parallel processing for scalability
+- Database persistence and query optimization
+- Basic observability (logs + alerts)
+- API design and rate limiting
+
+---
+
+## Future Improvements
+
+- Queue system (Celery / Redis)
+- Advanced alerting (Slack / Email)
+- Frontend dashboard improvements (charts)
+- Authentication & multi-user support
+- Distributed monitoring (multi-region checks)
