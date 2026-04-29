@@ -19,6 +19,9 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from fastapi import Request
+import asyncio
+
+task_queue = asyncio.Queue()
 
 COOLDOWN = timedelta(minutes=5)
 
@@ -486,7 +489,7 @@ def get_stats():
 
     finally:
         db.close()
-        
+
 @app.get("/checks")
 def get_checks():
     db = SessionLocal()
@@ -513,6 +516,12 @@ def health_check():
     return {"status": "ok"}
 
 
+@app.get("/queue")
+def get_queue_status():
+    return {
+        "pending_jobs": task_queue.qsize(),
+        "worker_count": 3
+    }
 @app.get("/targets")
 def get_targets():
     db = SessionLocal()
@@ -532,6 +541,34 @@ def get_targets():
     finally:
         db.close()
 
+        
+@app.post("/targets")
+def add_target(target: Target):
+    db = SessionLocal()
+    
+    existing = db.query(TargetModel).filter(TargetModel.url == target.url).first()
+
+    if existing:
+        raise HTTPException(status_code=400, detail="target url already exists")
+    
+    try:
+        row = TargetModel(
+            name=target.name,
+            url=target.url
+        )
+
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+
+        return {
+            "id": row.id,
+            "name": row.name,
+            "url": row.url
+        }
+
+    finally:
+        db.close()
 
 @app.post("/check")
 @limiter.limit("10/minute")
@@ -605,12 +642,19 @@ def update_target(target_id: int, target: Target):
     db.close()
     return result
 
+
+
+@app.on_event("startup")
+async def start_workers():
+    for i in range(3):
+        asyncio.create_task(worker(i))
+
 def request_with_retry(url: str, retries: int = 3, timeout: int = 3):
     last_error = None
 
     for attempt in range(1, retries + 1):
         try:
-            response = requests.get(url, timeout=timeout)
+            response = requests.get(url, timeout=timeout, allow_redirects=True)
             return response, attempt
 
         except requests.RequestException as e:
@@ -626,7 +670,7 @@ async def async_request_with_retry(url: str, retries: int = 3, timeout: int = 3)
     async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(1, retries + 1):
             try:
-                response = await client.get(url)
+                response = await client.get(url, follow_redirects=True)
                 return response, attempt
 
             except httpx.RequestError as e:
@@ -724,7 +768,13 @@ async def async_save_check_result(url: str):
         latency = int((time.time() - start) * 1000)
         is_up = res.status_code == 200
 
-        logging.info(f"[SUCCESS] {url} checked after {attempts} attempt(s)")
+        logging.info({
+            "event": "check_success",
+            "url": url,
+            "status_code": res.status_code,
+            "latency_ms": latency,
+            "attempts": attempts
+        })
 
         row = CheckResult(
             url=url,
@@ -767,7 +817,10 @@ async def async_save_check_result(url: str):
         logging.info(f"[FIRST CHECK] {url} is {'UP' if is_up else 'DOWN'}")
 
     if not is_up:
-        logging.warning(f"[DOWN] {url} is down")
+        logging.warning({
+            "event": "check_failed",
+            "url": url
+        })
 
     db.add(row)
     db.commit()
@@ -786,17 +839,24 @@ async def auto_check_targets_async():
     rows = db.query(TargetModel).all()
     db.close()
 
-    logging.info(f"[JOB] Checking {len(rows)} target(s)")
+    logging.info({
+        "event": "job_start",
+        "target_count": len(rows)
+    })
 
     if not rows:
-        logging.info("[JOB] No targets to check")
+        logging.info({
+            "event": "job_empty"
+        })
         return
 
-    await asyncio.gather(
-        *(async_save_check_result(target.url) for target in rows)
-    )
+    for target in rows:
+        await task_queue.put(target.url)
 
-    logging.info(f"[JOB] Finished checking {len(rows)} target(s)")
+    logging.info({
+        "event": "job_enqueued",
+        "target_count": len(rows)
+    })
     
 def run_auto_check_targets_async():
     asyncio.run(auto_check_targets_async())
@@ -816,3 +876,18 @@ def send_discord_alert(message: str):
 scheduler = BackgroundScheduler()
 scheduler.add_job(run_auto_check_targets_async, "interval", seconds=10)
 scheduler.start()
+
+async def worker(worker_id: int):
+    while True:
+        url = await task_queue.get()
+
+        logging.info({
+            "event": "worker_processing",
+            "worker_id": worker_id,
+            "url": url
+        })
+
+        try:
+            await async_save_check_result(url)
+        finally:
+            task_queue.task_done()

@@ -46,6 +46,7 @@ Dashboard / Alerts
 ### Core
 - `GET /` → Dashboard
 - `GET /health` → Service health
+- `GET /queue` → Queue status
 
 ### Targets
 - `POST /targets`
