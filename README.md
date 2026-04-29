@@ -65,9 +65,7 @@ Dashboard / Alerts
 
 ```bash
 docker compose up --build
-
-
-## Environment Variables
+Environment Variables
 
 Create a .env file from .env.example:
 
@@ -77,22 +75,16 @@ Required variables:
 
 DATABASE_URL
 DISCORD_WEBHOOK_URL
-
-## Screenshot
-
-![Dashboard](./screenshot.png)
+Screenshot
 
 What this project demonstrates
-
 Backend system design for monitoring services
 Handling unreliable networks with retry logic
 Async parallel processing for scalability
 Database persistence and query optimization
 Basic observability (logs + alerts)
 API design and rate limiting
-
 Future Improvements
-
 Queue system (Celery / Redis)
 Advanced alerting (Slack / Email)
 Frontend dashboard improvements (charts)
