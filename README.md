@@ -66,6 +66,7 @@ Dashboard / Alerts
 ```bash
 docker compose up --build
 Environment Variables
+```
 
 Create a .env file from .env.example:
 
