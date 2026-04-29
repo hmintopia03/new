@@ -14,6 +14,11 @@ from sqlalchemy import DateTime
 from fastapi.responses import HTMLResponse
 import httpx
 import asyncio
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from fastapi import Request
 
 COOLDOWN = timedelta(minutes=5)
 
@@ -32,6 +37,13 @@ else:
     engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        return db
+    finally:
+        pass
 
 class CheckResult(Base):
     __tablename__ = "checks"
@@ -60,6 +72,11 @@ class Target(BaseModel):
     url: str
 
 app = FastAPI()
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
 targets = []
 
 
@@ -442,78 +459,83 @@ def target_detail(target_id: int):
     </html>
     """
 
+@app.get("/stats")
+def get_stats():
+    db = SessionLocal()
+
+    try:
+        total_checks = db.query(CheckResult).count()
+        up_count = db.query(CheckResult).filter(CheckResult.is_up == True).count()
+        down_count = db.query(CheckResult).filter(CheckResult.is_up == False).count()
+
+        average_latency = (
+            db.query(func.avg(CheckResult.latency_ms))
+            .filter(CheckResult.latency_ms != None)
+            .scalar()
+        )
+
+        latest = db.query(CheckResult).order_by(CheckResult.id.desc()).first()
+
+        return {
+            "total_checks": total_checks,
+            "up_count": up_count,
+            "down_count": down_count,
+            "latest_status": "up" if latest and latest.is_up else "down",
+            "average_latency_ms": int(average_latency) if average_latency else None
+        }
+
+    finally:
+        db.close()
+        
 @app.get("/checks")
 def get_checks():
     db = SessionLocal()
-    rows = db.query(CheckResult).order_by(CheckResult.id.desc()).limit(20).all()
 
-    return [
-        {
-            "id": row.id,
-            "url": row.url,
-            "status_code": row.status_code,
-            "latency_ms": row.latency_ms,
-            "is_up": row.is_up
-        }
-        for row in rows
-    ]
+    try:
+        rows = db.query(CheckResult).order_by(CheckResult.id.desc()).limit(20).all()
+
+        return [
+            {
+                "id": row.id,
+                "url": row.url,
+                "status_code": row.status_code,
+                "latency_ms": row.latency_ms,
+                "is_up": row.is_up
+            }
+            for row in rows
+        ]
+
+    finally:
+        db.close()
 
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
-
-@app.post("/targets")
-def add_target(target: Target):
-    db = SessionLocal()
-
-    existing = db.query(TargetModel).filter(TargetModel.url == target.url).first()
-
-    if existing:
-        db.close()
-        raise HTTPException(
-            status_code=400,
-            detail="target url already exists"
-        )
-
-    row = TargetModel(
-        name=target.name,
-        url=target.url
-    )
-
-    db.add(row)
-    db.commit()
-
-    result = {
-        "id": row.id,
-        "name": row.name,
-        "url": row.url
-    }
-
-    db.close()
-    return result
 
 
 @app.get("/targets")
 def get_targets():
     db = SessionLocal()
 
-    rows = db.query(TargetModel).order_by(TargetModel.id.desc()).all()
+    try:
+        rows = db.query(TargetModel).order_by(TargetModel.id.desc()).all()
 
-    result = [
-        {
-            "id": row.id,
-            "name": row.name,
-            "url": row.url
-        }
-        for row in rows
-    ]
+        return [
+            {
+                "id": row.id,
+                "name": row.name,
+                "url": row.url
+            }
+            for row in rows
+        ]
 
-    db.close()
-    return result
+    finally:
+        db.close()
 
 
 @app.post("/check")
-def check_url(url: str):
+@limiter.limit("10/minute")
+def check_url(request: Request, url: str):
     result = save_check_result(url)
     return result
         
@@ -764,9 +786,17 @@ async def auto_check_targets_async():
     rows = db.query(TargetModel).all()
     db.close()
 
+    logging.info(f"[JOB] Checking {len(rows)} target(s)")
+
+    if not rows:
+        logging.info("[JOB] No targets to check")
+        return
+
     await asyncio.gather(
         *(async_save_check_result(target.url) for target in rows)
     )
+
+    logging.info(f"[JOB] Finished checking {len(rows)} target(s)")
     
 def run_auto_check_targets_async():
     asyncio.run(auto_check_targets_async())
