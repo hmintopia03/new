@@ -1,6 +1,6 @@
 # Uptime Monitor
 
-A backend system that monitors service availability, performs periodic health checks, and sends alerts on downtime.
+A production-style uptime monitoring system with async workers, retry logic, and real-time health visualization.
 
 ---
 
