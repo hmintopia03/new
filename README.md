@@ -83,6 +83,7 @@ Required variables:
 ## Screenshot
 
 ![Dashboard](./screenshot.png)
+![Dashboard](./screenshot2.png)
 
 ---
 

@@ -132,32 +132,36 @@ def dashboard():
                 uptime = "Calculating..."
 
         rows.append(f"""
-        <a href="/dashboard/{target.id}" style="text-decoration: none; color: inherit;">
-            <div class="card">
-                <div class="card-header">
-                    <div class="name">{target.name}</div>
-                    <div class="status {status_class}">{status}</div>
+        <div class="card">
+            <div class="card-header">
+                <div class="name">
+                    <a href="/dashboard/{target.id}" class="card-title-link">{target.name}</a>
+                </div>
+                <div class="status {status_class}">{status}</div>
+            </div>
+
+            <div class="url">{target.url}</div>
+            <div class="hint">{hint}</div>
+            {"<div class='hint'>Last checked: " + last_time + "</div>" if latest else ""}
+
+            {"<div class='empty-state'>No checks yet</div>" if not latest else ""}
+
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-label">Latency</div>
+                    <div class="metric-value {latency_class}">{latency}</div>
                 </div>
 
-                <div class="url">{target.url}</div>
-                <div class="hint">{hint}</div>
-                {"<div class='hint'>Last checked: " + last_time + "</div>" if latest else ""}
-
-                {"<div class='empty-state'>No checks yet</div>" if not latest else ""}
-
-                <div class="metrics">
-                    <div class="metric">
-                        <div class="metric-label">Latency</div>
-                        <div class="metric-value {latency_class}">{latency}</div>
-                    </div>
-
-                    <div class="metric">
-                        <div class="metric-label">Uptime</div>
-                        <div class="metric-value">{uptime}</div>
-                    </div>
+                <div class="metric">
+                    <div class="metric-label">Uptime</div>
+                    <div class="metric-value">{uptime}</div>
                 </div>
             </div>
-        </a>
+
+            <div class="actions">
+                <a href="/targets/{target.id}/trend" class="text-link">View Trend</a>
+            </div>
+        </div>
         """)
 
     db.close()
@@ -225,8 +229,19 @@ def dashboard():
                 }}
 
                 a {{
-                    display: inline-block;
-                    margin-top: 20px;
+                    color: inherit;
+                }}
+
+                .card-link {{
+                    text-decoration: none;
+                    color: inherit;
+                    display: block;
+                    margin-top: 0;
+                }}
+
+                .text-link {{
+                    color: #4b0082;
+                    text-decoration: underline;
                 }}
                 .card-header {{
                     display: flex;
@@ -287,6 +302,23 @@ def dashboard():
                 margin-bottom: 14px;
                 font-style: italic;
             }}
+            .card-title-link {{
+                color: inherit;
+                text-decoration: none;
+            }}
+
+            .card-title-link:hover {{
+                text-decoration: underline;
+            }}
+
+            .text-link {{
+                color: #4b0082;
+                text-decoration: underline;
+            }}
+
+            .actions {{
+                margin-top: 16px;
+            }}
             </style>
         </head>
         <body>
@@ -298,7 +330,7 @@ def dashboard():
             </div>
 
             <div class="actions">
-                <a href="/docs">API Docs</a>
+                <a href="/docs" class="text-link">API Docs</a>
             </div>
         </body>
     </html>
@@ -308,6 +340,7 @@ def target_detail(target_id: int):
     db = SessionLocal()
 
     target = db.query(TargetModel).filter(TargetModel.id == target_id).first()
+    
 
     if not target:
         return "<h1>Target not found</h1>"
@@ -450,7 +483,6 @@ def target_detail(target_id: int):
         <body>
             <h1>Uptime Monitor</h1>
             <div class="subtitle">Live service health dashboard. Auto-refreshes every 10 seconds.</div>
-
             <div class="grid">
                 {''.join(rows)}
             </div>
@@ -541,7 +573,136 @@ def get_targets():
     finally:
         db.close()
 
-        
+@app.get("/targets/{target_id}/trend", response_class=HTMLResponse)
+def target_trend(target_id: int):
+    db = SessionLocal()
+
+    target = db.query(TargetModel).filter(TargetModel.id == target_id).first()
+
+    if not target:
+        return "<h1>Target not found</h1>"
+
+    checks = (
+        db.query(CheckResult)
+        .filter(CheckResult.url == target.url)
+        .order_by(CheckResult.id.desc())
+        .limit(20)
+        .all()
+    )
+
+    up_count = sum(1 for c in checks if c.is_up)
+    uptime_percent = (up_count / len(checks) * 100) if checks else 0
+    uptime = f"{uptime_percent:.1f}%" if checks else "N/A"
+
+    if uptime_percent >= 95:
+        uptime_color = "#16a34a"
+    elif uptime_percent >= 80:
+        uptime_color = "#f59e0b"
+    else:
+        uptime_color = "#dc2626"
+
+    latencies = [c.latency_ms for c in checks if c.latency_ms is not None]
+    avg_latency = int(sum(latencies) / len(latencies)) if latencies else None
+    avg_latency_text = f"{avg_latency}ms" if avg_latency else "N/A"
+
+    if avg_latency is None:
+        latency_color = "#6b7280"
+    elif avg_latency < 300:
+        latency_color = "#16a34a"
+    elif avg_latency < 800:
+        latency_color = "#f59e0b"
+    else:
+        latency_color = "#dc2626"
+
+    bars = []
+
+    latency_points = []
+
+    if latencies:
+        max_latency = max(latencies)
+
+        for c in reversed(checks):
+            if c.latency_ms is None:
+                height = 4
+            else:
+                height = max(4, int((c.latency_ms / max_latency) * 80))
+
+            latency_points.append(f"""
+            <div style="
+                width: 10px;
+                height: {height}px;
+                background: #2563eb;
+                border-radius: 3px;
+                align-self: flex-end;
+            "></div>
+            """)
+
+    for c in reversed(checks):
+        color = "#16a34a" if c.is_up else "#dc2626"
+
+        bars.append(f"""
+        <div style="
+            width: 10px;
+            height: 40px;
+            background: {color};
+            border-radius: 3px;
+        "></div>
+        """)
+
+    db.close()
+
+    return f"""
+    <html>
+        <head>
+            <title>Trend</title>
+        </head>
+        <body style="font-family: Arial; padding: 40px;">
+            <h1>{target.name} - Uptime Trend</h1>
+            <div style="display: flex; gap: 16px; margin: 24px 0;">  
+                <div style="padding: 20px; border: 1px solid #ddd; border-radius: 14px;">
+                    <div style="color: #777;">Uptime</div>
+                    <div style="font-size: 42px; font-weight: bold; color: {uptime_color};">
+                        {uptime}
+                    </div>
+                </div>
+
+                <div style="padding: 20px; border: 1px solid #ddd; border-radius: 14px;">
+                    <div style="color: #777;">Average Latency</div>
+                    <div style="font-size: 42px; font-weight: bold; color: {latency_color};">
+                        {avg_latency_text}
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 4px; margin-top: 20px;">
+                {''.join(bars)}
+            </div>
+
+            <h2 style="margin-top: 40px;">Latency Trend</h2>
+
+            <div style="
+                display: flex;
+                align-items: flex-end;
+                gap: 4px;
+                height: 90px;
+                margin-top: 12px;
+            ">
+                {''.join(latency_points)}
+            </div>
+
+            <div style="margin-top: 20px;">
+                <span style="color: #16a34a;">■ UP</span>
+                <span style="color: #dc2626; margin-left: 20px;">■ DOWN</span>
+            </div>
+
+            <div style="margin-top: 30px;">
+                <a href="/dashboard/{target.id}">← Back</a>
+            </div>
+        </body>
+    </html>
+    """
+
+
 @app.post("/targets")
 def add_target(target: Target):
     db = SessionLocal()
